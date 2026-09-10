@@ -1,0 +1,36 @@
+# Mayhem target `ikos-analyzer` — ikos's static analyzer, driven IN PROCESS.
+#
+# /mayhem/ikos-analyzer is the libFuzzer harness mayhem/harnesses/ikos_analyzer_fuzzer.cpp, built by
+# mayhem/build.sh from the ikos-analyzer executable's own objects (everything but its main()). Each
+# input is LLVM IR TEXT: parsed with llvm::parseAssembly, verified with llvm::verifyModule, run
+# through the `ikos-pp -opt=basic` pipeline the production `ikos` driver applies, imported into ikos's
+# AR by llvm_to_ar::Importer and analysed by the interprocedural sequential value analysis over the
+# interval domain with the boa/dbz/nullity/uva/prover checkers, results going to an in-memory sqlite
+# database. Nothing is written to disk, so there is no scratch path and no cwd requirement.
+#
+# Why in-process text IR rather than the CLI on a fuzzed file (PR #1184 review): the file-input form
+# handed mutated BITCODE to LLVM's reader, and all 62 "defects" of Mayhem run #2 were LLVM
+# report_fatal_error stacks rooted at llvm::sys::PrintStackTrace inside the prebuilt, debug-info-free
+# LLVM 14 — not ikos bugs, and not symbolizable. Every crash this target can now report comes from a
+# module LLVM itself considers valid, with frames in ikos code built at DWARF-3.
+#
+# Built sanitized (ASan+UBSan halting, only `vptr` relaxed because the linked LLVM 14 is -fno-rtti —
+# see mayhem/build.sh), SanCov-instrumented, DWARF-3, ikos's own assertions ON (-DENABLE_ASSERTIONS).
+# libFuzzer bounds the per-input time itself (Mayhem's `timeout:` is for raw targets only); the
+# harness bounds the WORK — 64 KiB of input, 20k instructions, 8 entry points, a fixed narrowing
+# budget — so no in-process alarm is needed.
+# Seeds: 69 .ll modules compiled from ikos's own regression suite, all 16 check categories
+# (mayhem/gen-seeds.sh). Dictionary: 301 LLVM IR text tokens plus the libc/libc++/__ikos_* functions
+# the AR importer models.
+project: savantenvs/ikos
+target: ikos-analyzer
+
+testsuite:
+  - https://$MAYHEM_DOMAIN/$MAYHEM_PROJECT/$MAYHEM_TARGET/testsuite.tar
+  - file://mayhem/ikos-analyzer/testsuite
+
+
+cmds:
+  - cmd: /mayhem/ikos-analyzer
+    libfuzzer: true
+    dictionary: /mayhem/mayhem/ikos-analyzer/ikos-analyzer.dict

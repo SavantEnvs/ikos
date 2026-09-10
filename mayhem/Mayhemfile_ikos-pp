@@ -1,0 +1,38 @@
+# Mayhem target `ikos-pp` — ikos's LLVM pass pipeline, driven IN PROCESS.
+#
+# /mayhem/ikos-pp is the libFuzzer harness mayhem/harnesses/ikos_pp_fuzzer.cpp, built by
+# mayhem/build.sh against libikos-pp (frontend/llvm/src/pass/*.cpp). Each input is LLVM IR TEXT:
+# parsed with llvm::parseAssembly, verified with llvm::verifyModule, then run through the pass
+# pipeline frontend/llvm/src/ikos_pp.cpp builds for `-opt=aggressive -inline-all` — all six ikos
+# passes (lower_cst_expr, lower_select, mark_internal_inline, name_values, remove_printf_calls,
+# remove_unreachable_blocks) plus the LLVM transforms that feed them. The transformed module is
+# verified AGAIN: a pass that turns a valid module into an invalid one is an ikos-pp defect and the
+# harness aborts naming the verifier error. Nothing is written to disk (the CLI's bitcode output is
+# LLVM's writer, not ikos code), so there is no output path and no cwd requirement.
+#
+# Why in-process text IR rather than the CLI on a fuzzed file (PR #1184 review): the file-input form
+# handed mutated BITCODE to LLVM's reader, and all 87 "defects" of Mayhem run #2 were LLVM
+# report_fatal_error stacks rooted at llvm::sys::PrintStackTrace inside the prebuilt, debug-info-free
+# LLVM 14 — not ikos bugs, and not symbolizable.
+#
+# Built sanitized (ASan+UBSan halting, only `vptr` relaxed because the linked LLVM 14 is -fno-rtti —
+# see mayhem/build.sh), SanCov-instrumented, DWARF-3, ikos's own assertions ON (-DENABLE_ASSERTIONS).
+# The instrumented surface is deliberately just ikos's ~1 kloc of passes: the LLVM libraries are a
+# prebuilt release build and carry no SanCov, so the coverage Mayhem reports is ikos coverage.
+# libFuzzer bounds the per-input time itself (Mayhem's `timeout:` is for raw targets only); the
+# harness bounds the WORK (64 KiB of input, 20k instructions), so no in-process alarm is needed.
+# Seeds: 69 .ll modules compiled from ikos's own regression suite, all 16 check categories
+# (mayhem/gen-seeds.sh). Dictionary: 263 LLVM IR text tokens plus the printf-family names
+# remove_printf_calls matches on.
+project: savantenvs/ikos
+target: ikos-pp
+
+testsuite:
+  - https://$MAYHEM_DOMAIN/$MAYHEM_PROJECT/$MAYHEM_TARGET/testsuite.tar
+  - file://mayhem/ikos-pp/testsuite
+
+
+cmds:
+  - cmd: /mayhem/ikos-pp
+    libfuzzer: true
+    dictionary: /mayhem/mayhem/ikos-pp/ikos-pp.dict
